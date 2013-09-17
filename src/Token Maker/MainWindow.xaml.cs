@@ -29,7 +29,9 @@ namespace CommonWell.Tools
             InitializeComponent();
             PopulateSubjectRoles();
             PopulatePurposeOfUse();
-            DateExpiration.Value = DateTime.Now.AddMinutes(5).ToUniversalTime();
+            DateExpiration.Value = DateTime.Now.AddMinutes(5);
+            StartDate.Value = DateTime.Now;
+            RequestDate.Value = null;
             SetControlsFromSettings();
         }
 
@@ -100,7 +102,7 @@ namespace CommonWell.Tools
                 TextBoxJwtSignature.Clear();
                 TextBoxJwtHeader.Clear();
                 TextBoxJwtBody.Clear();
-                if (!IsCertificateLoaded()) return;
+                
                 TextBoxJwtToken.Text = BuildJwtToken();
                 DecodeJwtToken();
             }
@@ -114,7 +116,6 @@ namespace CommonWell.Tools
         {
             try
             {
-                if (!IsCertificateLoaded()) return;
                 DecodeJwtToken();
             }
             catch (Exception err)
@@ -127,7 +128,6 @@ namespace CommonWell.Tools
         {
             try
             {
-                if (!IsCertificateLoaded()) return;
                 TextBoxSamlToken.Text = BuildSamlToken();
             }
             catch (Exception err)
@@ -171,27 +171,69 @@ namespace CommonWell.Tools
         private string BuildJwtToken()
         {
             var tokenHandler = new JwtSecurityTokenHandler();
-            var certificate =
-                new X509Certificate2(Settings.Default.CertificatePath, Settings.Default.Passphrase);
+
+            var claims = new ClaimsIdentity(new[]
+                {
+                    new Claim(XspaClaimTypes.SubjectIdentifier, TextBoxSubject.Text),
+                    new Claim(XspaClaimTypes.SubjectRole, ComboBoxSubjectRole.SelectedValue.ToString()),
+                    new Claim(XspaClaimTypes.SubjectOrganization, TextBoxOrganization.Text),
+                    new Claim(XspaClaimTypes.OrganizationIdentifier, TextBoxOrganizationId.Text),
+                    new Claim(XspaClaimTypes.PurposeOfUse, ComboBoxPurposeOfUse.SelectedValue.ToString()),
+                    new Claim(XspaClaimTypes.NationalProviderIdentifier, TextBoxNpi.Text)
+                });
+
+            if (RequestDate.Value.HasValue)
+            {
+                claims.AddClaim(new Claim(CommonWellClaimTypes.RequestDateTimeUtc, RequestDate.Value.Value.ToUniversalTime().ToString("o")));
+            }
+
+            if (!String.IsNullOrWhiteSpace(CorrelationId.Text))
+            {
+                claims.AddClaim(new Claim(CommonWellClaimTypes.CorrelationId, CorrelationId.Text));
+            }
+            
             var tokenDescriptor = new SecurityTokenDescriptor
                 {
-                    Subject = new ClaimsIdentity(new[]
-                        {
-                            new Claim(XspaClaimTypes.SubjectIdentifier, TextBoxSubject.Text),
-                            new Claim(XspaClaimTypes.SubjectRole, ComboBoxSubjectRole.SelectedValue.ToString()),
-                            new Claim(XspaClaimTypes.SubjectOrganization, TextBoxOrganization.Text),
-                            new Claim(XspaClaimTypes.OrganizationIdentifier, TextBoxOrganizationId.Text),
-                            new Claim(XspaClaimTypes.PurposeOfUse, ComboBoxPurposeOfUse.SelectedValue.ToString()),
-                            new Claim(XspaClaimTypes.NationalProviderIdentifier, TextBoxNpi.Text)
-                        }),
+                    Subject = claims,
                     TokenIssuerName = "self",
                     TokenType = "JWT",
                     AppliesToAddress = XspaClaimTypes.AppliesToAddress,
-                    Lifetime = new Lifetime(DateTime.Now.ToUniversalTime(), DateExpiration.Value),
-                    SigningCredentials = new X509SigningCredentials(certificate)
+                    Lifetime = GetTokenLifetime()
                 };
+
+            if(HasCertificate())
+            {
+                var certificate =
+                    new X509Certificate2(Settings.Default.CertificatePath, Settings.Default.Passphrase);
+                var signingCredentials = new X509SigningCredentials(certificate);
+                tokenDescriptor.SigningCredentials = signingCredentials;
+            }
             SecurityToken token = tokenHandler.CreateToken(tokenDescriptor);
             return tokenHandler.WriteToken(token);
+        }
+
+        private Lifetime GetTokenLifetime()
+        {
+            DateTime? startDate = null;
+            DateTime? endDate = null;
+
+            if (StartDate.Value.HasValue)
+            {
+                startDate = StartDate.Value.Value.ToUniversalTime();
+            }
+
+            if (DateExpiration.Value.HasValue)
+            {
+                endDate = DateExpiration.Value.Value.ToUniversalTime();
+            }
+
+            return new Lifetime(startDate, endDate);
+        }
+
+        private bool HasCertificate()
+        {
+            return !String.IsNullOrWhiteSpace(Settings.Default.CertificatePath) &&
+                   !String.IsNullOrWhiteSpace(Settings.Default.Passphrase);
         }
 
         private void ChooseCertificate_Click(object sender, RoutedEventArgs e)
@@ -261,10 +303,15 @@ namespace CommonWell.Tools
                     TokenIssuerName = "self",
                     TokenType = "http://docs.oasis-open.org/wss/oasis-wss-saml-token-profile-1.1#SAMLV2.0",
                     AppliesToAddress = XspaClaimTypes.AppliesToAddress,
-                    Lifetime = new Lifetime(DateTime.Now.ToUniversalTime(), DateExpiration.Value)
+                    Lifetime = GetTokenLifetime()
                 };
-            var certificate = new X509Certificate2(Settings.Default.CertificatePath, Settings.Default.Passphrase);
-            tokenDescriptor.SigningCredentials = new X509SigningCredentials(certificate);
+
+            if (HasCertificate())
+            {
+                var certificate = new X509Certificate2(Settings.Default.CertificatePath, Settings.Default.Passphrase);
+                tokenDescriptor.SigningCredentials = new X509SigningCredentials(certificate);
+
+            }
             var token = tokenHandler.CreateToken(tokenDescriptor) as Saml2SecurityToken;
             var settings = new XmlWriterSettings {Indent = true};
             var sbuilder = new StringBuilder();
@@ -301,6 +348,41 @@ namespace CommonWell.Tools
 
             public string Key { get; set; }
             public string Value { get; set; }
+        }
+
+        private void RemoveCertificate_Click(object sender, RoutedEventArgs e)
+        {
+            Settings.Default.CertificatePath = null;
+            Settings.Default.Passphrase = null;
+
+            SetControlsFromSettings();
+        }
+
+        private void TabItem_GotFocus(object sender, RoutedEventArgs e)
+        {
+            RequestDate.Visibility = lblRequestDate.Visibility = Visibility.Hidden;
+            CorrelationId.Visibility = lblCorrelationId.Visibility = Visibility.Hidden;
+        }
+
+        private void TabItem_GotFocus_1(object sender, RoutedEventArgs e)
+        {
+            RequestDate.Visibility = lblRequestDate.Visibility = Visibility.Visible;
+            CorrelationId.Visibility = lblCorrelationId.Visibility = Visibility.Visible;
+        }
+
+        private void TabControl_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+
+            if (tab.SelectedIndex == 0)
+            {
+                RequestDate.Visibility = lblRequestDate.Visibility = Visibility.Visible;
+                CorrelationId.Visibility = lblCorrelationId.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                RequestDate.Visibility = lblRequestDate.Visibility = Visibility.Hidden;
+                CorrelationId.Visibility = lblCorrelationId.Visibility = Visibility.Hidden;
+            }
         }
     }
 }
