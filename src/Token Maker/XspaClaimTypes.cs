@@ -8,12 +8,12 @@
         /// <summary>
         /// SubjectIdentifier.
         /// </summary>
-        public const string SubjectIdentifier = "urn:oasis:names:tc:xacml:1.0:subject:subject-id";
+        public const string SubjectIdentifier = "urn:oasis:names:tc:xspa:1.0:subject:subject-id";
 
         /// <summary>
         /// SubjectOrganization.
         /// </summary>
-        public const string SubjectOrganization = "urn:oasis:names:tc:xpsa:1.0:subject:organization";
+        public const string SubjectOrganization = "urn:oasis:names:tc:xspa:1.0:subject:organization";
 
         /// <summary>
         /// SubjectRole.
